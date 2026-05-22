@@ -65,7 +65,7 @@ def filename_from_text(text: str) -> str:
 def make_qr(text: str, cfg: QRConfig) -> Image.Image:
     qr = qrcode.QRCode(
         version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,  # type: ignore
         box_size=cfg.box_size,
         border=cfg.border,
     )
@@ -73,7 +73,7 @@ def make_qr(text: str, cfg: QRConfig) -> Image.Image:
     qr.add_data(text)
     qr.make(fit=True)
 
-    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
+    img = qr.make_image(fill_color="black", back_color="white").convert("RGB")  # type: ignore
 
     # optional upscale (safe integer scaling only)
     if cfg.size:
@@ -81,7 +81,7 @@ def make_qr(text: str, cfg: QRConfig) -> Image.Image:
         if scale > 1:
             img = img.resize(
                 (img.size[0] * scale, img.size[1] * scale),
-                Image.NEAREST,
+                Image.Resampling.NEAREST,
             )
 
     return img
