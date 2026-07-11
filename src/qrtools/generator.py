@@ -10,10 +10,6 @@ from urllib.parse import urlparse
 import qrcode
 from PIL import Image
 
-# ----------------------------
-# Config
-# ----------------------------
-
 
 @dataclass(frozen=True, slots=True)
 class QRConfig:
@@ -21,10 +17,13 @@ class QRConfig:
     border: int = 4
     size: int = 512
 
-
-# ----------------------------
-# Normalization helpers
-# ----------------------------
+    def __post_init__(self) -> None:
+        if self.box_size <= 0:
+            raise ValueError("box_size must be > 0")
+        if self.border < 0:
+            raise ValueError("border must be >= 0")
+        if self.size <= 0:
+            raise ValueError("size must be > 0")
 
 
 _URL_FIX_RE = re.compile(r"^(https?):/(?!/)")
@@ -32,13 +31,12 @@ _URL_FIX_RE = re.compile(r"^(https?):/(?!/)")
 
 def normalize_input(text: str) -> str:
     text = text.strip()
+
     if not text:
         raise ValueError("Empty input")
 
-    # fix broken scheme like https:/example.com
     text = _URL_FIX_RE.sub(r"\1://", text)
 
-    # if it looks like a bare domain, optionally upgrade to URL
     if "://" not in text and "." in text and " " not in text:
         text = "https://" + text
 
@@ -46,27 +44,19 @@ def normalize_input(text: str) -> str:
 
 
 def filename_from_text(text: str) -> str:
-    # try URL-based name first
-    p = urlparse(text)
-    host = (p.netloc or "").split(":")[0]
+    parsed = urlparse(text)
+    host = parsed.netloc.split(":")[0]
 
     if host:
         return f"{host}.png"
 
-    # fallback: hash for arbitrary text
-    h = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
-    return f"qr_{h}.png"
-
-
-# ----------------------------
-# QR core
-# ----------------------------
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()[:10]
+    return f"qr_{digest}.png"
 
 
 def make_qr(text: str, cfg: QRConfig) -> Image.Image:
     qr = qrcode.QRCode(
-        version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_M,  # type: ignore
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
         box_size=cfg.box_size,
         border=cfg.border,
     )
@@ -74,72 +64,69 @@ def make_qr(text: str, cfg: QRConfig) -> Image.Image:
     qr.add_data(text)
     qr.make(fit=True)
 
-    img = qr.make_image(fill_color="black", back_color="white")  # type: ignore
+    img = qr.make_image(
+        fill_color="black",
+        back_color="white",
+    )
 
-    # optional upscale (safe integer scaling only)
-    if cfg.size:
-        scale = cfg.size // img.size[0]
-        if scale > 1:
-            img = img.resize(
-                (img.size[0] * scale, img.size[1] * scale),
-                Image.Resampling.NEAREST,
-            )
+    # qrcode returns mode "1"; expose stable RGB API
+    img = img.convert("RGB")
+
+    if img.size != (cfg.size, cfg.size):
+        img = img.resize(
+            (cfg.size, cfg.size),
+            Image.Resampling.NEAREST,
+        )
 
     return img
 
 
 def save_qr(img: Image.Image, path: str | Path) -> None:
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    img.save(path, format="PNG", optimize=True)
-
-
-# ----------------------------
-# CLI
-# ----------------------------
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    img.save(output, format="PNG", optimize=True)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+    parser = argparse.ArgumentParser(
         prog="qr",
-        description="Generate QR codes from arbitrary text (URL, JSON, ID, etc.)",
+        description="Generate QR codes from arbitrary text",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "text",
         help="Payload (URL, text, JSON, device ID, etc.)",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "-o",
         "--out",
-        type=str,
         default=None,
-        help="Output file path (default: auto-generated)",
+        help="Output PNG path",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "--size",
         type=int,
         default=512,
-        help="Output image size in pixels",
+        help="Output image size",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "--border",
         type=int,
         default=1,
-        help="QR border size (quiet zone)",
+        help="QR quiet zone size",
     )
 
-    p.add_argument(
+    parser.add_argument(
         "--box-size",
         type=int,
         default=10,
-        help="QR module pixel size",
+        help="QR module size",
     )
 
-    return p
+    return parser
 
 
 def main() -> None:
@@ -147,20 +134,18 @@ def main() -> None:
 
     payload = normalize_input(args.text)
 
-    out = args.out or filename_from_text(payload)
+    output = args.out or filename_from_text(payload)
 
     cfg = QRConfig(
         size=args.size,
         border=args.border,
         box_size=args.box_size,
     )
-    print(
-        f"Generating QR code for payload: {payload} -> {out} (size={cfg.size}px, border={cfg.border}, box_size={cfg.box_size})"
-    )
-    img = make_qr(payload, cfg)
-    save_qr(img, out)
 
-    print(out)
+    img = make_qr(payload, cfg)
+    save_qr(img, output)
+
+    print(output)
 
 
 if __name__ == "__main__":
